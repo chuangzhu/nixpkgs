@@ -20,8 +20,19 @@ let
         description = "Name of the zone.";
       };
       master = mkOption {
-        description = "Master=false means slave server";
-        type = types.bool;
+        description = ''
+          <emphasis role="strong">Deprecated</emphasis>, please use <xref linkend="opt-services.bind.zones._name_.type"/> instead.
+
+          Master=false means slave server.
+        '';
+        type = types.nullOr types.bool;
+        default = null;
+      };
+      type = mkOption {
+        description = "Type of the zone.";
+        # https://bind9.readthedocs.io/en/v9_16_16/reference.html#zone-types
+        type = types.nullOr (types.enum [ "master" "slave" "mirror" "hint" "stub" "static-stub" "forward" "redirect" "delegation-only" ]);
+        default = null;
       };
       file = mkOption {
         type = types.either types.str types.path;
@@ -30,10 +41,16 @@ let
       masters = mkOption {
         type = types.listOf types.str;
         description = "List of servers for inclusion in stub and secondary zones.";
+        default = [ ];
       };
       slaves = mkOption {
         type = types.listOf types.str;
         description = "Addresses who may request zone transfers.";
+        default = [ ];
+      };
+      forwarders = mkOption {
+        type = types.listOf types.str;
+        description = "List of servers we should forward requests for this zone to.";
         default = [ ];
       };
       extraConfig = mkOption {
@@ -69,21 +86,24 @@ let
       ${cfg.extraConfig}
 
       ${ concatMapStrings
-          ({ name, file, master ? true, slaves ? [], masters ? [], extraConfig ? "" }:
+          ({ name, file, master ? true, type, slaves ? [], masters ? [], forwarders ? [], extraConfig ? "" }:
             ''
               zone "${name}" {
-                type ${if master then "master" else "slave"};
+                type ${if type != null then type else (if master then "master" else "slave")};
                 file "${file}";
-                ${ if master then
-                   ''
+                ${ optionalString (slaves != []) ''
                      allow-transfer {
                        ${concatMapStrings (ip: "${ip};\n") slaves}
                      };
-                   ''
-                   else
-                   ''
+                   '' +
+                   optionalString (masters != []) ''
                      masters {
                        ${concatMapStrings (ip: "${ip};\n") masters}
+                     };
+                   '' +
+                   optionalString (forwarders != []) ''
+                     forwarders {
+                       ${concatMapStrings (ip: "${ip};\n") forwarders}
                      };
                    ''
                 }
@@ -225,6 +245,21 @@ in
 
   config = mkIf cfg.enable {
 
+    assertions = [
+      {
+        assertion = all (zone: zone.master == null || zone.type == null) (attrValues cfg.zones);
+        message = ''
+          The options services.bind.zones.<name>.master and services.bind.zones.<name>.type are mutually exclusive.
+        '';
+      }
+      {
+        assertion = all (zone: zone.master != null || zone.type != null) (attrValues cfg.zones);
+        message = ''
+          One of services.bind.zones.<name>.master and services.bind.zones.<name>.type must be set.
+        '';
+      }
+    ];
+
     networking.resolvconf.useLocalResolver = mkDefault true;
 
     users.users.${bindUser} =
@@ -233,7 +268,7 @@ in
         description = "BIND daemon user";
         isSystemUser = true;
       };
-    users.groups.${bindUser} = {};
+    users.groups.${bindUser} = { };
 
     systemd.services.bind = {
       description = "BIND Domain Name Server";
