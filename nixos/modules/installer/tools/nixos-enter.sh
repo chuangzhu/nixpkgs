@@ -7,6 +7,11 @@ set -e
 # mounts get cleaned up automatically.
 if [ -z "$NIXOS_ENTER_REEXEC" ]; then
     export NIXOS_ENTER_REEXEC=1
+
+    # Set up binfmt
+    echo -1 > /proc/sys/fs/binfmt_misc/aarch64-linux || true
+    echo ':aarch64-linux:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xb7\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\x00\xff\xfe\xff\xff\xff:'"$(readlink /run/binfmt/aarch64-linux)":P > /proc/sys/fs/binfmt_misc/register
+
     if [ "$(id -u)" != 0 ]; then
         extraFlags="-r"
     fi

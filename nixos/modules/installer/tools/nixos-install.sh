@@ -183,6 +183,9 @@ fi
 nix-env --store "$mountPoint" "${extraBuildFlags[@]}" \
         --extra-substituters "$sub" \
         -p "$mountPoint"/nix/var/nix/profiles/system --set "$system" "${verbosity[@]}"
+nix-env --store "$mountPoint" "${extraBuildFlags[@]}" \
+        --extra-substituters "$sub" \
+        -p "$mountPoint"/nix/var/nix/profiles/emulator --set /run/binfmt/aarch64-linux "${verbosity[@]}"
 
 # Mark the target as a NixOS installation, otherwise switch-to-configuration will chicken out.
 mkdir -m 0755 -p "$mountPoint/etc"
