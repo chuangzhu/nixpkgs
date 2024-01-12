@@ -2,12 +2,13 @@
 , buildPythonPackage
 , pythonOlder
 , fetchFromGitHub
-, setuptools-scm
-, toml
+, poetry-core
+, poetry-dynamic-versioning
+, typing-extensions
 , pytestCheckHook
 , pytest-benchmark
-, hatch-vcs
-, hatchling
+, pytest-cov
+, pydantic
 }:
 
 buildPythonPackage rec {
@@ -15,7 +16,8 @@ buildPythonPackage rec {
   version = "3.0.0";
 
   format = "pyproject";
-  disabled = pythonOlder "3.7";
+  # < 3.10 requires get-annotations which isn't packaged yet
+  disabled = pythonOlder "3.10";
 
   src = fetchFromGitHub {
     owner = "eigenein";
@@ -25,13 +27,20 @@ buildPythonPackage rec {
   };
 
   nativeBuildInputs = [
-    hatch-vcs
-    hatchling
+    poetry-core
+    poetry-dynamic-versioning
+    typing-extensions
+  ];
+
+  propagatedBuildInputs = [
+    typing-extensions
   ];
 
   checkInputs = [
     pytestCheckHook
     pytest-benchmark
+    pytest-cov
+    pydantic
   ];
 
   pythonImportsCheck = [
