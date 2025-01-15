@@ -1,10 +1,13 @@
 let
   cert =
     pkgs:
-    pkgs.runCommand "selfSignedCerts" { buildInputs = [ pkgs.openssl ]; } ''
-      openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -nodes -subj '/CN=example.com/CN=muc.example.com/CN=matrix.example.com' -days 36500
+    # Matrix-federation-tester wants subjectAltName
+    pkgs.runCommand "selfSignedCerts" { nativeBuildInputs = [ pkgs.openssl ]; } ''
       mkdir -p $out
-      cp key.pem cert.pem $out
+      openssl req -x509 -newkey rsa:4096 -nodes -days 36500 \
+        -keyout $out/key.pem -out $out/cert.pem \
+        -subj '/CN=example.com/CN=*.example.com' \
+        -addext 'subjectAltName = DNS.1:example.com,DNS.2:*.example.com'
     '';
 in
 import ../make-test-python.nix (
@@ -12,31 +15,52 @@ import ../make-test-python.nix (
   {
     name = "ejabberd";
     meta = with pkgs.lib.maintainers; {
-      maintainers = [ ];
+      maintainers = [ chuangzhu ];
     };
+
     nodes = {
       client =
         { nodes, pkgs, ... }:
         {
           security.pki.certificateFiles = [ "${cert pkgs}/cert.pem" ];
-          networking.extraHosts = ''
-            ${nodes.server.networking.primaryIPAddress} example.com
+          # networking.nameservers doesn't work
+          environment.etc."resolv.conf".text = ''
+            nameserver ${nodes.server.networking.primaryIPAddress}
           '';
 
           environment.systemPackages = [
             (pkgs.callPackage ./xmpp-sendmessage.nix {
               connectTo = nodes.server.networking.primaryIPAddress;
             })
+            pkgs.matrix-federation-tester
           ];
+
+          nixpkgs.config.allowUnfreePredicate = pkg: pkgs.lib.getName pkg == "matrix-federation-tester";
         };
+
       server =
         { config, pkgs, ... }:
         {
           security.pki.certificateFiles = [ "${cert pkgs}/cert.pem" ];
-          networking.extraHosts = ''
-            ${config.networking.primaryIPAddress} example.com
-            ${config.networking.primaryIPAddress} matrix.example.com
+          environment.etc."resolv.conf".text = ''
+            nameserver ${config.networking.primaryIPAddress}
           '';
+
+          # Matrix-federation-tester wants SRV records; host an authoritative DNS server
+          services.knot = {
+            enable = true;
+            settings = {
+              server.listen = [ "0.0.0.0@53" ];
+              zone."example.com".file = pkgs.writeText "" ''
+                @ SOA ns.example.com. noc.example.com. 2019031301 86400 7200 3600000 172800
+                @ NS ns
+                ns A ${config.networking.primaryIPAddress}
+                @ A ${config.networking.primaryIPAddress}
+                matrix A ${config.networking.primaryIPAddress}
+                _matrix._tcp SRV 0 5 8448 matrix
+              '';
+            };
+          };
 
           services.ejabberd = {
             enable = true;
@@ -296,15 +320,16 @@ import ../make-test-python.nix (
     };
 
     testScript =
-      { nodes, ... }:
+      { ... }:
       ''
+        import json
+
         ejabberd_prefix = "su ejabberd -s $(which ejabberdctl) "
 
         server.wait_for_unit("ejabberd.service")
+        server.wait_for_unit("knot.service")
 
         assert "status: started" in server.succeed(ejabberd_prefix + "status")
-
-        server.succeed("curl https://matrix.example.com:8448/_matrix/key/v2/server")
 
         server.succeed(
             ejabberd_prefix + "register azurediamond example.com hunter2",
@@ -316,6 +341,11 @@ import ../make-test-python.nix (
             ejabberd_prefix + "unregister cthon98 example.com",
             ejabberd_prefix + "unregister azurediamond example.com",
         )
+
+        client.succeed("curl https://matrix.example.com:8448/_matrix/key/v2/server")
+        result = client.succeed("matrix-federation-tester -lookup example.com")
+        print(result)
+        assert json.loads(result)['FederationOK'] == True
       '';
   }
 )
